@@ -1,18 +1,45 @@
-name: All Publish
+name: Deploy all artifacts
+
 on:
-  workflow_dispatch:
-#  push:
-#    branches:
-#      - "main"
+  push:
+    tags:
+      - v*
+
+env:
+  LIB_VERSION: ${{ github.ref_name }}
+
 jobs:
-  call-kmmbridge-publish:
-    permissions:
-      contents: write
-      packages: write
-    uses: touchlab/KMMBridgeGithubWorkflow/.github/workflows/faktorybuildautoversion.yml@v1.1
-    with:
-      jvmVersion: 17
-      versionBaseProperty: LIBRARY_VERSION
-      publishTask: kmmBridgePublish publishKotlinMultiplatformPublicationToGitHubPackagesRepository publishAndroidDebugPublicationToGitHubPackagesRepository publishAndroidReleasePublicationToGitHubPackagesRepository
-#    secrets:
-#      PODSPEC_SSH_KEY: ${{ secrets.PODSPEC_SSH_KEY }}
+
+  publish:
+    concurrency: "kmmbridgepublish-${{ github.repository }}"
+    runs-on: macos-latest
+    steps:
+      - name: Checkout the repo
+        uses: actions/checkout@v4
+
+      - uses: extractions/netrc@v1
+        with:
+          machine: ${{ inputs.netrcMachine }}
+          username: ${{ secrets.netrcUsername != '' && secrets.netrcUsername || 'cirunner' }}
+          password: ${{ secrets.netrcPassword != '' && secrets.netrcPassword || secrets.GITHUB_TOKEN  }}
+
+      - uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/wrapper-validation-action@v1
+
+      - name: Cache build tooling
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.konan
+          key: ${{ runner.os }}-v4-${{ hashFiles('*.gradle.kts') }}
+
+      - name: Build Main
+        run: ./gradlew kmmBridgePublish publishKotlinMultiplatformPublicationToGitHubPackagesRepository publishAndroidReleasePublicationToGitHubPackagesRepository -PAUTO_VERSION=$LIB_VERSION -PENABLE_PUBLISHING=true -PGITHUB_PUBLISH_TOKEN=${{ secrets.GITHUB_TOKEN }} -PGITHUB_REPO=${{ github.repository }} --no-daemon --stacktrace
+        env:
+          GRADLE_OPTS: -Dkotlin.incremental=false -Dorg.gradle.jvmargs="-Xmx3g -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8 -XX:MaxMetaspaceSize=512m"
